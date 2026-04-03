@@ -14,6 +14,7 @@ python project_obj_to_image.py
 从2d图纸中重建出3d的过山车轨道：
 - 手动标注2d轨迹点然后保存```python trajectory_2d_generation.py```
 - 标注高度点并平滑拟合轨迹```python trajectory_3d_generation.py```
+- 可视化编辑器编辑3d轨迹点```python edit_3d_trajectory.py```
 
 
 查看3d生成结果：```python visualize_3d_traj.py --file trajectory_3d.csv```

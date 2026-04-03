@@ -251,12 +251,19 @@ def generate_pose(trajectory, speed_segments, output_file, frame_rate=30):
 
 if __name__ == "__main__":
   
-    traj_path = "trajectory_3d.csv"
+    traj_path = "path_sampled_3000.csv"
     output_pose_file = "pose.txt"
     
     # 读取 3D 轨迹数据
     traj = np.loadtxt(traj_path, delimiter=',', skiprows=1)
-    traj[:, 1] = 60 - traj[:, 1]  # 把坐标中心换到左下（因为图片的0，0是左上），60是图片高度
+    traj = traj / 100.0
+    # 交换y和z轴(因为unity原始数据的y是高度)
+    traj = traj[:, [2, 0, 1]]
+    # traj[:, 1] = 60 - traj[:, 1]  # 把坐标中心换到左下（因为图片的0，0是左上），60是图片高度
+    
+    # 绕Z轴90
+    traj = traj[:, [1, 0, 2]]
+    traj[:, 1] = -1 * traj[:, 1]
     
     # 插值并平滑轨迹
     num_points = 4000

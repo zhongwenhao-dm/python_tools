@@ -24,8 +24,8 @@ def smooth_curve(points, num_points=200, smoothness=0.0):
     points = np.array(points)
     x, y = points[:, 0], points[:, 1]
     
-    # 拟合 B-spline 曲线
-    tck, u = splprep([x, y], s=smoothness)
+    # 拟合 B-spline 曲线，设置 per=1 使曲线闭合
+    tck, u = splprep([x, y], s=smoothness, per=1)
     u_fine = np.linspace(0, 1, num_points)
     x_fine, y_fine = splev(u_fine, tck)
     smoothed = np.vstack((x_fine, y_fine)).T

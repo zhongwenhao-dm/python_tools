@@ -44,9 +44,11 @@ def save_obj_file(trajectory_3d, filename="trajectory.obj"):
             f.write(f"v {x:.4f} {y:.4f} {z:.4f}\n")
         for i in range(1, len(trajectory_3d)):
             f.write(f"l {i} {i+1}\n")
+        # 添加最后一条线连接首尾
+        f.write(f"l {len(trajectory_3d)} 1\n")
     print(f"已保存为 .obj 文件：{filename}")
 
-def main(image_path, trajectory_csv, output_csv, scale_width_meters=67):
+def main(image_path, trajectory_csv, output_csv, scale_width_meters=69):
     img = cv2.imread(image_path)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
@@ -75,6 +77,9 @@ def main(image_path, trajectory_csv, output_csv, scale_width_meters=67):
         
         # 合并成3d
         trajectory_3d = np.hstack((trajectory_2d, z_vals[:, None]))
+        
+        # 添加首点到末尾，实现首尾相接
+        trajectory_3d = np.vstack([trajectory_3d, trajectory_3d[0]])
         
         # 保存为 CSV
         np.savetxt(output_csv, trajectory_3d, delimiter=',', header='x,y,z', comments='')
