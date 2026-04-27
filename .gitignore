@@ -1,1 +1,5 @@
-./trail_extraction/data/
+trail_extraction/data/
+easy_odom/flow/data/
+
+__pycache__/
+*.py[cod]
