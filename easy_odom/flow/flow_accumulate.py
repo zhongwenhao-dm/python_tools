@@ -6,7 +6,7 @@
    另加一个 yaw 安装偏差（默认 +10°，使 IMU +y 前进在 flow 系表现为 y 增大、x 减小）。
    先用 IMU 角速度估计相邻 flow 时刻的传感器旋转，在传感器平面中心近似下扣除旋转光流；
    再从首条 **IMU** 起积分姿态，在**首条 flow** 处作姿态锚定 ``R0^{-1}R``，位置从
-   **(0,0,0)** 起累加补偿后的每步光流（仍为 flow 原始单位/无量纲，非米）。
+   **(0,0,0)** 起累加补偿后的每步光流，并用标定尺度转成米。
 2. **纯 IMU 惯导**：**首点位置、速度 0、姿态 I**，再按时间步用 ``a_w = R @ a + g`` 与陀螺积分
    （**米**，**漂移极大**）；对返回再 ``p -= p[0]`` 保证首点为 0。
 3. **PRY 曲线**：同一份陀螺积分结果转为 pitch/roll/yaw（deg），直接观察旋转变化。
@@ -55,9 +55,15 @@ R_IMU_TO_FLOW = _R_YAW_IMU_TO_FLOW @ _R_FLOW_TO_IMU_BASE.T
 # v_imu = R_FLOW_TO_IMU @ v_flow。
 R_FLOW_TO_IMU = R_IMU_TO_FLOW.T
 
-# 旋转补偿把 rad 转成 flow 原始单位需要一个等效增益；先按“无尺度”处理为 1。
-FLOW_ROT_GAIN_X = 1.0
-FLOW_ROT_GAIN_Y = 1.0
+# 由 flow_calibration.py 标定：
+# 1 flow unit ≈ 9.8818255e-05 m；1 rad 旋转 ≈ 609.955 flow units。
+FLOW_METERS_PER_UNIT = 9.88182550804e-05
+FLOW_METERS_PER_UNIT_PER_METER_HEIGHT = 0.001639464632
+FLOW_ROT_GAIN_X = 609.955213722
+FLOW_ROT_GAIN_Y = 609.955213722
+
+# 平移外参：IMU 坐标系下，从 IMU 中心指向 flow 传感器中心（m）。
+FLOW_TRANSLATION_IMU_TO_FLOW_M = np.array([0.025, -0.090, 0.0], dtype=np.float64)
 
 # flow.txt: 行1 "--- timestamp: <sec> ---", 行2 为整行 PointStamped
 _TS_LINE = re.compile(r"^--- timestamp: ([0-9.]+) ---\s*$")
@@ -220,6 +226,25 @@ def compensate_flow_rotation_center(
     return fx_corr, fy_corr
 
 
+def compute_lever_arm_delta_imu_m(rots_imu_to_world_at_flow: Rotation) -> np.ndarray:
+    """
+    计算相邻 flow 时刻，因 IMU-flow 平移外参导致的 flow 中心相对 IMU 中心位移（IMU 系，m）。
+
+    若刚体只有旋转，flow 中心相对 IMU 中心的位置从 ``r`` 变为 ``R_delta @ r``，
+    因此这段额外位移为 ``(R_delta - I) @ r``。这是真实米制位移，会被光流看到；
+    为了估计 IMU 中心轨迹，需要从 flow 估计的米制位移中扣除它。
+    """
+    n = len(rots_imu_to_world_at_flow)
+    out = np.zeros((n, 3), dtype=np.float64)
+    r = FLOW_TRANSLATION_IMU_TO_FLOW_M
+    for i in range(n - 1):
+        r_delta_imu = (
+            rots_imu_to_world_at_flow[i].inv() * rots_imu_to_world_at_flow[i + 1]
+        )
+        out[i, :] = r_delta_imu.apply(r) - r
+    return out
+
+
 def integrate_flow_to_world_path(
     fx: np.ndarray,
     fy: np.ndarray,
@@ -229,14 +254,15 @@ def integrate_flow_to_world_path(
 ) -> np.ndarray:
     """
     由角速度从 **首条 IMU** 起积分姿态，Slerp 到各 flow 时刻。先根据相邻 flow 时刻的传感器旋转
-    扣除中心近似旋转光流；补偿后的每步 (fx, fy) 按光流坐标 ``x=左、y=前`` 组成平面位移，
-    经 ``R_FLOW_TO_IMU`` 到 IMU 系，再变到**以首条 flow 为参考**的世界系：
+    扣除中心近似旋转光流；补偿后的每步 (fx, fy) 按光流坐标 ``x=左、y=前`` 组成平面位移并转为米，
+    经 ``R_FLOW_TO_IMU`` 到 IMU 系后，再扣除安装平移外参带来的杆臂旋转位移，最后变到
+    **以首条 flow 为参考**的世界系：
 
     令 ``R_i`` 为 Slerp 在 ``t_flow[i]`` 处的姿态，``R0 = R_0``，则
     ``d_i' = (R0^{-1} R_i) @ v_i``，使**首条 flow 处机体系与参考世界系对齐**；位置从
     **(0,0,0)** 起累加：``p[0]=0``，``p[i]=\\sum_{j=0}^{i-1} d_j'``。
 
-    返回 (N, 3)（与 (fx/fx, fy/fy) 同量级，非米）。
+    返回 (N, 3) 米制轨迹。
     """
     if len(t_imu) < 2:
         raise ValueError("IMU 时间序列至少需要 2 个样本以作插值")
@@ -258,12 +284,13 @@ def integrate_flow_to_world_path(
         [fx_corr, fy_corr, np.zeros(n, dtype=np.float64)],
         axis=1,
     )
-    v_i = (R_FLOW_TO_IMU @ v_c.T).T
+    v_i = (R_FLOW_TO_IMU @ v_c.T).T * FLOW_METERS_PER_UNIT
+    v_i -= compute_lever_arm_delta_imu_m(rots)
     R0 = rots[0]
     d_world = np.empty((n, 3), dtype=np.float64)
     for i in range(n):
         d_world[i, :] = (R0.inv() * rots[i]).apply(v_i[i, :])
-    # p[0]=0, p[i]=sum(d[0..i-1])，共 n 行
+    # p[0]=0, p[i]=sum(d[0..i-1])，共 n 行。
     return np.vstack(
         (np.zeros((1, 3), dtype=np.float64), np.cumsum(d_world, axis=0)[:-1, :])
     )
@@ -290,9 +317,9 @@ def plot_trajectory(
     ax0.scatter(wx[0], wy[0], c="green", s=40, zorder=5, label="start")
     if len(wx) > 1:
         ax0.scatter(wx[-1], wy[-1], c="crimson", s=40, zorder=5, label="end")
-    ax0.set_xlabel("cum x (flow units, not m)")
-    ax0.set_ylabel("cum y (flow units, not m)")
-    ax0.set_title("rotation-compensated flow → world")
+    ax0.set_xlabel("x (m)")
+    ax0.set_ylabel("y (m)")
+    ax0.set_title("rotation-compensated flow → world (m)")
     ax0.set_aspect("equal", adjustable="box")
     ax0.grid(True, alpha=0.35)
     ax0.legend(loc="best", fontsize=8)
@@ -398,7 +425,7 @@ def main() -> None:
     pry_end = pry_deg[-1]
     print(f"已加载 IMU: {imu_path}（{len(t_imu)} 条）")
     print(
-        f"光流+∫ω 累加末点 (flow units): ({wf[0]:.4f}, {wf[1]:.4f}, {wf[2]:.4f})"
+        f"光流+∫ω 米制末点 (m): ({wf[0]:.4f}, {wf[1]:.4f}, {wf[2]:.4f})"
     )
     print(
         f"纯 IMU 惯导末位置 (m, ENU, 大漂移可预期): ({p_end[0]:.4f}, {p_end[1]:.4f}, {p_end[2]:.4f})"

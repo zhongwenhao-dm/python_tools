@@ -81,17 +81,53 @@ python pose_visualization.py /path/to/fused_pose.csv --out /path/to/pose.png --n
 
 ---
 
-## `flow/flow_accumulate.py`：光流 + 纯 IMU 对比
+## `flow/flow_calibration.py`：光流尺度标定
 
-**只接数据目录**（其下 **`flow.txt`** 与 **`imu.txt`** 固定文件名）。依赖：`numpy`、`scipy`、`matplotlib`。
+根据多组实验的 `cum_x,cum_y,height_m,distance_m` 估计光流米制尺度，并给出旋转补偿尺度建议值。
 
-- **不画**「仅像方像素累加、与 IMU 无关」的轨迹；左图、中图**均**由 IMU 参与。
-- **左图**：光流传感器坐标按 **`x=左、y=前、z=下`** 处理，不使用 `camera_calibration.py` 的相机外参；默认加 **`FLOW_YAW_OFFSET_DEG = 10`** 的安装 yaw 偏差（IMU +y 前进时 flow 系 `y` 增大、`x` 减小）。先估计并扣除中心近似旋转光流，再在**首条 flow** 处用 `R0^{-1}R` 锚定，位置从 **(0,0,0)** 起累加（flow 原始单位，非米）。
-- **中图**：**首点 p、v=0、R=I** 后惯导双积分，且 **p[0] 强置为 0**（**米**，漂移大）。第三图：`flow` 的 `Point.z`。第四图：陀螺积分得到的 **pitch/roll/yaw** 曲线。
+```bash
+cd easy_odom
+python flow/flow_calibration.py
+python flow/flow_calibration.py --csv /path/to/calib.csv
+```
+
+当前已写入的标定结果：`FLOW_METERS_PER_UNIT = 9.88182550804e-05`，`FLOW_ROT_GAIN_X/Y = 609.955213722`。
+
+---
+
+## `flow/flow_accumulate.py`：光流/IMU 轨迹检查
+
+**只接数据目录**（其下固定为 **`flow.txt`** 与 **`imu.txt`**）。依赖：`numpy`、`scipy`、`matplotlib`。
+
+- 左图：flow 经旋转补偿、米制恢复、杆臂补偿后，在首条 flow 姿态处锚定并从 `(0,0,0)` 累加。
+- 中图：纯 IMU 惯导双积分，仅作漂移对比。
+- 第三图：`flow` 的 `Point.z` 辅助量；第四图：陀螺积分得到的 `pitch/roll/yaw`。
+- 坐标约定：flow `x=左,y=前,z=下`；IMU `x=右,y=前,z=上`；默认 `FLOW_YAW_OFFSET_DEG = 10`。
+- 平移外参：`FLOW_TRANSLATION_IMU_TO_FLOW_M = [0.025, -0.090, 0]`（IMU 系，IMU 中心到 flow 中心）。
 
 ```bash
 cd easy_odom
 python flow/flow_accumulate.py /你的数据目录
+```
+
+## `flow/flow_imu_fusion.py`：Flow + IMU EKF 融合
+
+读取同一数据目录下的 `imu.txt` 与 `flow.txt`，输出 `flow_imu_fused_pose.csv`，同时导出 `flow_velocity_observations.csv` 用于检查 flow 速度观测。
+
+融合逻辑：
+
+- 开头 `2s` 静止段估计 IMU 零偏；只用 `ax,ay,az,wx,wy,wz`，不读取四元数列。
+- IMU 加速度/角速度做预测，flow 旋转补偿 + 米制尺度 + 杆臂补偿后作为机体系 `vx,vy` 观测更新 EKF。
+- 默认平面约束：`z = vz = roll = pitch = 0`，只估计平面位置、速度和 yaw。
+- 平面 `ax/ay` 降权使用：直行 `ACCEL_XY_SCALE_STRAIGHT = 0.20`，急转弯 `ACCEL_XY_SCALE_TURN = 0.05`（`|wz| >= 0.80 rad/s`）。
+- 低速 flow 触发零速更新：`speed <= 0.05 m/s` 使用 `FLOW_ZUPT_SIGMA_VEL = 0.025`。
+- 异常观测过滤：`FLOW_MAX_SPEED_MPS = 1.5`，`FLOW_GATE_CHI2 = 5.99`，`FLOW_MIN_FEATURE_COUNT = 20`。
+
+```bash
+cd easy_odom
+python flow/flow_imu_fusion.py /你的数据目录 --vis
+python flow/flow_imu_fusion.py /你的数据目录 --save_fig /tmp/flow_imu.png
+python flow/flow_imu_fusion.py /你的数据目录 --flow_vel_out /tmp/flow_vel.csv
 ```
 
 ---
