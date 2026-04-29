@@ -81,6 +81,21 @@ python pose_visualization.py /path/to/fused_pose.csv --out /path/to/pose.png --n
 
 ---
 
+## `flow/flow_accumulate.py`：光流 + 纯 IMU 对比
+
+**只接数据目录**（其下 **`flow.txt`** 与 **`imu.txt`** 固定文件名）。依赖：`numpy`、`scipy`、`matplotlib`。
+
+- **不画**「仅像方像素累加、与 IMU 无关」的轨迹；左图、中图**均**由 IMU 参与。
+- **左图**：光流传感器坐标按 **`x=左、y=前、z=下`** 处理，不使用 `camera_calibration.py` 的相机外参；默认加 **`FLOW_YAW_OFFSET_DEG = 10`** 的安装 yaw 偏差（IMU +y 前进时 flow 系 `y` 增大、`x` 减小）。先估计并扣除中心近似旋转光流，再在**首条 flow** 处用 `R0^{-1}R` 锚定，位置从 **(0,0,0)** 起累加（flow 原始单位，非米）。
+- **中图**：**首点 p、v=0、R=I** 后惯导双积分，且 **p[0] 强置为 0**（**米**，漂移大）。第三图：`flow` 的 `Point.z`。第四图：陀螺积分得到的 **pitch/roll/yaw** 曲线。
+
+```bash
+cd easy_odom
+python flow/flow_accumulate.py /你的数据目录
+```
+
+---
+
 ## Python 中直接调用
 
 ```python
