@@ -130,6 +130,21 @@ python flow/flow_imu_fusion.py /你的数据目录 --save_fig /tmp/flow_imu.png
 python flow/flow_imu_fusion.py /你的数据目录 --flow_vel_out /tmp/flow_vel.csv
 ```
 
+## `visual/visual_odom.py`：单目视觉里程计
+
+读取 `camera_image_compressed/*.png`，使用 ORB 特征、Essential Matrix 与 `recoverPose` 估计相邻帧相对运动；默认用 `lekiwi_base_velocity.txt` 给单目平移恢复近似尺度。每次运行都会实时显示前后帧匹配/内点追踪和当前累计轨迹。图片相邻帧基线较小时 Essential 容易退化，所以默认 `--step 10` 抽帧处理。
+
+效果不佳...
+
+```bash
+cd easy_odom
+python visual/visual_odom.py /home/dmgz/ZWH/lerobot/data/lekiwi/my_awesome_kiwi_20260403_161202
+python visual/visual_odom.py /你的数据目录 --start_percent 20 --end_percent 60
+python visual/visual_odom.py /你的数据目录 --scale_mode unit --max_frames 200
+```
+
+实时窗口左侧为前后帧 ORB 匹配/内点追踪，右侧为实时累计 XY 轨迹；可用 `--realtime_matches` 控制左图最多绘制的匹配数量。`--start_percent/--end_percent` 会先按完整图片序列百分比裁剪，再按 `--step` 抽帧。
+
 ---
 
 ## Python 中直接调用
